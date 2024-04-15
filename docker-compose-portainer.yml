@@ -1,0 +1,32 @@
+services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    ports:
+      - "9000:9000"
+    volumes:
+      - /run/user/1000/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    restart: always
+
+  backup:
+    image: offen/docker-volume-backup:latest
+    restart: always
+    environment:
+      BACKUP_CRON_EXPRESSION: '0 1 * * *'
+      BACKUP_FILENAME: portainer-%Y-%m-%dT%H-%M-%S.tar.gz
+      BACKUP_PRUNING_PREFIX: backup-
+      BACKUP_RETENTION_DAYS: '14'
+      WEBDAV_URL: ${WEBDAV_URL}
+      WEBDAV_PATH: ${WEBDAV_BASE_PATH}/portainer
+      WEBDAV_USERNAME: "${WEBDAV_USERNAME}"
+      WEBDAV_PASSWORD: "${WEBDAV_PASSWORD}"
+      WEBDAV_URL_INSECURE: "${WEBDAV_URL_INSECURE}"
+      TZ: Europe/Berlin
+    volumes:
+      - /run/user/1000/docker.sock:/var/run/docker.sock:ro
+      - portainer_data:/backup/portainer:ro
+      - ./backups:/archive
+
+volumes:
+  portainer_data:
+    external: true
