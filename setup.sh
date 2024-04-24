@@ -52,14 +52,6 @@ restore() {
     rm -rf "$TEMP_DIR"
 }
 
-cleanup() {
-    echo "Entferne bestehende Docker-Installationen..."
-    sudo apt-get remove -y docker docker-engine docker.io containerd runc
-
-    echo "Entferne nicht mehr benötigte Pakete..."
-    sudo apt autoremove -y
-}
-
 install_uidmap() {
     if ! command -v uidmap &> /dev/null; then
         echo "Installiere uidmap..."
@@ -70,37 +62,13 @@ install_uidmap() {
 }
 
 install_docker() {
-    if [ -x "$HOME/bin/dockerd" ]; then
-        echo "Entferne existierende Docker Rootless Installation..."
-        systemctl --user stop docker
-        rm -f /home/$USER/bin/dockerd
+    if command -v docker &>/dev/null && docker --version &>/dev/null; then
+        echo "Docker ist bereits installiert."
+        return
     fi
 
     echo "Installiere Docker Rootless..."
     curl -fsSL https://get.docker.com/rootless | sh
-}
-
-configure_docker() {
-    echo "Füge Umgebungsvariablen zu ~/.bash_aliases hinzu..."
-    echo 'export PATH=/home/$USER/bin:$PATH' >> ~/.bash_aliases
-    echo 'export DOCKER_HOST=unix:///run/user/1000/docker.sock' >> ~/.bash_aliases
-
-    source ~/.bash_aliases
-
-    if [ "$DOCKER_HOST" != "unix:///run/user/1000/docker.sock" ]; then
-        echo "Die DOCKER_HOST-Umgebungsvariable wurde nicht korrekt gesetzt."
-    fi
-
-    echo "Setze cap_net_bind_service für rootlesskit, um Ports unter 1024 zu nutzen..."
-    sudo setcap cap_net_bind_service=ep $HOME/bin/rootlesskit
-
-    echo "Konfiguriere und starte Docker-Dienst..."
-    systemctl --user start docker
-    systemctl --user enable docker
-    sudo loginctl enable-linger $(whoami)
-
-    echo "Überprüfe die Docker-Installation mit 'docker info'..."
-    docker info
 }
 
 install_docker_compose() {
@@ -113,18 +81,79 @@ install_docker_compose() {
     fi
 }
 
+install_rclone() {
+    if ! command -v rclone &> /dev/null; then
+        echo "Installiere rclone..."
+        curl -s https://rclone.org/install.sh | sudo bash
+    else
+        echo "rclone ist bereits installiert."
+    fi
+}
+
+configure_docker() {
+    local modified=0
+    grep -q 'export PATH=/home/$USER/bin:$PATH' ~/.bash_aliases || {
+        echo 'export PATH=/home/$USER/bin:$PATH' >> ~/.bash_aliases
+        modified=1
+    }
+
+    grep -q 'export DOCKER_HOST=unix:///run/user/1000/docker.sock' ~/.bash_aliases || {
+        echo 'export DOCKER_HOST=unix:///run/user/1000/docker.sock' >> ~/.bash_aliases
+        modified=1
+    }
+
+    (( modified )) && source ~/.bash_aliases
+
+    if ! getcap $HOME/bin/rootlesskit | grep -q 'cap_net_bind_service=ep'; then
+        sudo setcap cap_net_bind_service=ep $HOME/bin/rootlesskit
+    fi
+
+    if ! systemctl --user is-active --quiet docker; then
+        systemctl --user start docker
+        systemctl --user enable docker
+        sudo loginctl enable-linger $(whoami)
+    fi
+
+    docker info || {
+        echo "Fehler bei der Überprüfung der Docker-Installation."
+        exit 1
+    }
+}
+
+configure_rclone() {
+    echo "Konfiguriere rclone für WebDAV..."
+
+    RCLONE_CONF_PATH="$HOME/.config/rclone/rclone.conf"
+
+    if [ -f "$RCLONE_CONF_PATH" ]; then
+        echo "Entferne bestehende rclone-Konfigurationsdatei..."
+        rm -f "$RCLONE_CONF_PATH"
+    fi
+
+    rclone config create nas webdav \
+        url=$WEBDAV_URL \
+        vendor=other \
+        user=$WEBDAV_USERNAME \
+        pass=$WEBDAV_PASSWORD
+
+    echo "rclone wurde konfiguriert."
+}
+
 create_env_file() {
     echo "Erstelle .env Datei mit Secrets für den Backup-Service..."
 
-    # WEBDAV Credentials abfragen
-    read -p "Geben Sie die WEBDAV_URL ein (z.B. http://192.168.1.50:5005): " webdav_url
-    read -p "Geben Sie den WEBDAV_USERNAME ein (z.B. minecraft-server): " webdav_username
-    read -p "Geben Sie den WEBDAV_BASE_PATH ein (z.B. /minecraft-server/backups): " WEBDAV_BASE_PATH
+    read -p "Geben Sie die WEBDAV_URL ein (z.B. http://192.168.1.1:5005): " webdav_url
+    while [[ ! "$webdav_url" =~ ^http ]]; do
+        echo "Ungültige URL. Bitte erneut eingeben:"
+        read -p "Geben Sie die WEBDAV_URL ein (z.B. http://192.168.1.1:5005): " webdav_url
+    done
+
+    read -p "Geben Sie den WEBDAV_USERNAME ein: " webdav_username
+    read -p "Geben Sie den WEBDAV_BASE_PATH ein: " WEBDAV_BASE_PATH
     read -sp "Geben Sie das WEBDAV_PASSWORD ein: " webdav_password
     echo
     read -p "Ist die WEBDAV_URL unsicher und soll trotzdem verwendet werden (true/false)?: " webdav_url_insecure
 
-    # .env Datei erstellen
     cat > .env << EOF
 WEBDAV_URL=$webdav_url
 WEBDAV_USERNAME=$webdav_username
@@ -141,7 +170,7 @@ load_env_file() {
     source .env
 }
 
-restore_portainer() {
+install_portainer() {
     # Stoppen und Entfernen des bestehenden Portainer-Containers und -Volumes, falls vorhanden, mit Docker Compose
     echo "Stoppe und entferne bestehende Portainer-Container und -Volumes mit Docker Compose..."
     docker-compose -f docker-compose-portainer.yml down
@@ -182,23 +211,35 @@ configure_ufw() {
     sudo ufw allow ssh
     
     sudo ufw allow 9000/tcp # Portainer
+    
+    # Creative Minecraft
     sudo ufw allow 25565/tcp # Minecraft Java
     sudo ufw allow 19132/udp # Minecraft Bedrock (Geyser)
+
+    # Survival Minecraft
+    sudo ufw allow 25566/tcp # Minecraft Java
+    sudo ufw allow 19133/udp # Minecraft Bedrock (Geyser)
+
     sudo ufw status verbose | grep "Status: active" > /dev/null || sudo ufw enable
 }
 
 start_portainer() {
-    echo "Starte Portainer mit Docker Compose..."
-    docker-compose -f docker-compose-portainer.yml up -d
-    echo "Portainer wurde mit Docker Compose gestartet."
+    # Prüfe, ob ein Portainer-Container bereits läuft
+    if docker ps --format '{{.Names}}' | grep -q 'portainer'; then
+        echo "Portainer läuft bereits."
+    else
+        echo "Starte Portainer mit Docker Compose..."
+        docker-compose -f docker-compose-portainer.yml up -d
+        echo "Portainer wurde mit Docker Compose gestartet."
+    fi
 }
 
 main() {
-    #cleanup
-    #install_uidmap
-    #install_docker
-    #configure_docker
-    #install_docker_compose
+    install_uidmap
+    install_docker
+    configure_docker
+    install_docker_compose
+    install_portainer
 
     if [[ " $* " != *" --skip-env "* ]]; then
         create_env_file
@@ -206,8 +247,8 @@ main() {
 
     load_env_file
 
-    restore_portainer
-    restore_minecraft_data "minecraft-creative"
+    install_rclone
+    configure_rclone
 
     configure_ufw
 
