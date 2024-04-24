@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Globale Variablen
+# Global variables
 DOCKER_HOST_PATH="/run/user/1000/docker.sock"
 DOCKER_VOLUMES_PATH="./.local/share/docker/volumes"
 PORTAINER_VOLUME="portainer_data"
@@ -9,84 +9,84 @@ restore() {
     BACKUP_FILENAME=$1
     EXTRACT_PATH=$2
     WEBDAV_PATH=$3
-    VOLUME_NAME=$4  # Angenommen, dies ist der Name des Docker Volumes
+    VOLUME_NAME=$4  # Assuming this is the Docker volume name
 
-    # Stellen Sie sicher, dass BACKUP_FILENAME gesetzt ist
+    # Ensure BACKUP_FILENAME is set
     if [ -z "$BACKUP_FILENAME" ]; then
-        echo "BACKUP_FILENAME ist nicht gesetzt."
+        echo "BACKUP_FILENAME is not set."
         exit 1
     fi
 
-    # Erstellen eines einzigartigen temporären Verzeichnisses
+    # Create a unique temporary directory
     TEMP_DIR=$(mktemp -d)
 
-    # Download-URL zusammensetzen
+    # Compose the download URL
     DOWNLOAD_URL="${WEBDAV_URL}/${WEBDAV_PATH}/${BACKUP_FILENAME}"
 
-    echo "Lade Backup herunter von: $DOWNLOAD_URL"
+    echo "Downloading backup from: $DOWNLOAD_URL"
 
-    # Datei von WebDAV herunterladen
+    # Download the file from WebDAV
     curl -u "${WEBDAV_USERNAME}:${WEBDAV_PASSWORD}" $CURL_INSECURE_FLAG -o "${TEMP_DIR}/${BACKUP_FILENAME}" $DOWNLOAD_URL
 
-    # Überprüfen, ob die Datei erfolgreich heruntergeladen wurde
+    # Check if the file was downloaded successfully
     if [ -f "${TEMP_DIR}/${BACKUP_FILENAME}" ]; then
-        # Backup-Datei lokal entpacken
+        # Locally extract the backup file
         mkdir "${TEMP_DIR}/extracted"
         tar -xzf "${TEMP_DIR}/${BACKUP_FILENAME}" -C "${TEMP_DIR}/extracted"
 
-        # Prüfen, ob der spezifizierte Pfad im entpackten Inhalt existiert
+        # Check if the specified path exists in the extracted content
         if [ ! -d "${TEMP_DIR}/extracted/${EXTRACT_PATH}" ]; then
-            echo "${EXTRACT_PATH} existiert nicht im Archiv."
+            echo "${EXTRACT_PATH} does not exist in the archive."
             exit 1
         fi
 
-        # Verwenden Sie einen Docker-Container, um den spezifizierten Pfad in das Volume zu kopieren
+        # Use a Docker container to copy the specified path into the volume
         docker run --rm -v "${TEMP_DIR}/extracted/${EXTRACT_PATH}:/source" -v "${VOLUME_NAME}:/_data" alpine cp -a /source/. /_data
 
-        echo "Backup-Teil wurde erfolgreich in das Docker-Volume kopiert."
+        echo "Backup segment successfully copied into the Docker volume."
     else
-        echo "Die Datei konnte nicht heruntergeladen werden."
+        echo "The file could not be downloaded."
     fi
 
-    # Löschen des temporären Verzeichnisses
+    # Remove the temporary directory
     rm -rf "$TEMP_DIR"
 }
 
 install_uidmap() {
     if ! command -v uidmap &> /dev/null; then
-        echo "Installiere uidmap..."
+        echo "Installing uidmap..."
         sudo apt-get update && sudo apt-get install -y uidmap
     else
-        echo "uidmap ist bereits installiert."
+        echo "uidmap is already installed."
     fi
 }
 
 install_docker() {
     if command -v docker &>/dev/null && docker --version &>/dev/null; then
-        echo "Docker ist bereits installiert."
+        echo "Docker is already installed."
         return
     fi
 
-    echo "Installiere Docker Rootless..."
+    echo "Installing Docker Rootless..."
     curl -fsSL https://get.docker.com/rootless | sh
 }
 
 install_docker_compose() {
     if ! command -v docker-compose &> /dev/null; then
-        echo "Installiere Docker Compose..."
+        echo "Installing Docker Compose..."
         sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
         sudo chmod +x /usr/local/bin/docker-compose
     else
-        echo "Docker Compose ist bereits installiert."
+        echo "Docker Compose is already installed."
     fi
 }
 
 install_rclone() {
     if ! command -v rclone &> /dev/null; then
-        echo "Installiere rclone..."
+        echo "Installing rclone..."
         curl -s https://rclone.org/install.sh | sudo bash
     else
-        echo "rclone ist bereits installiert."
+        echo "rclone is already installed."
     fi
 }
 
@@ -115,18 +115,18 @@ configure_docker() {
     fi
 
     docker info || {
-        echo "Fehler bei der Überprüfung der Docker-Installation."
+        echo "Error checking Docker installation."
         exit 1
     }
 }
 
 configure_rclone() {
-    echo "Konfiguriere rclone für WebDAV..."
+    echo "Configuring rclone for WebDAV..."
 
     RCLONE_CONF_PATH="$HOME/.config/rclone/rclone.conf"
 
     if [ -f "$RCLONE_CONF_PATH" ]; then
-        echo "Entferne bestehende rclone-Konfigurationsdatei..."
+        echo "Removing existing rclone configuration file..."
         rm -f "$RCLONE_CONF_PATH"
     fi
 
@@ -136,23 +136,23 @@ configure_rclone() {
         user=$WEBDAV_USERNAME \
         pass=$WEBDAV_PASSWORD
 
-    echo "rclone wurde konfiguriert."
+    echo "rclone configured."
 }
 
 create_env_file() {
-    echo "Erstelle .env Datei mit Secrets für den Backup-Service..."
+    echo "Creating .env file with secrets for the backup service..."
 
-    read -p "Geben Sie die WEBDAV_URL ein (z.B. http://192.168.1.1:5005): " webdav_url
+    read -p "Enter the WEBDAV_URL (e.g., http://192.168.1.1:5005): " webdav_url
     while [[ ! "$webdav_url" =~ ^http ]]; do
-        echo "Ungültige URL. Bitte erneut eingeben:"
-        read -p "Geben Sie die WEBDAV_URL ein (z.B. http://192.168.1.1:5005): " webdav_url
+        echo "Invalid URL. Please enter again:"
+        read -p "Enter the WEBDAV_URL (e.g., http://192.168.1.1:5005): " webdav_url
     done
 
-    read -p "Geben Sie den WEBDAV_USERNAME ein: " webdav_username
-    read -p "Geben Sie den WEBDAV_BASE_PATH ein: " WEBDAV_BASE_PATH
-    read -sp "Geben Sie das WEBDAV_PASSWORD ein: " webdav_password
+    read -p "Enter the WEBDAV_USERNAME: " webdav_username
+    read -p "Enter the WEBDAV_BASE_PATH: " WEBDAV_BASE_PATH
+    read -sp "Enter the WEBDAV_PASSWORD: " webdav_password
     echo
-    read -p "Ist die WEBDAV_URL unsicher und soll trotzdem verwendet werden (true/false)?: " webdav_url_insecure
+    read -p "Is the WEBDAV_URL insecure and still to be used (true/false)?: " webdav_url_insecure
 
     cat > .env << EOF
 WEBDAV_URL=$webdav_url
@@ -162,52 +162,44 @@ WEBDAV_BASE_PATH=$WEBDAV_BASE_PATH
 WEBDAV_URL_INSECURE=$webdav_url_insecure
 EOF
 
-    echo ".env Datei erstellt."
+    echo ".env file created."
 }
 
 load_env_file() {
-    # Lädt die Variablen aus der .env Datei
+    # Load variables from the .env file
     source .env
 }
 
 install_portainer() {
-    # Stoppen und Entfernen des bestehenden Portainer-Containers und -Volumes, falls vorhanden, mit Docker Compose
-    echo "Stoppe und entferne bestehende Portainer-Container und -Volumes mit Docker Compose..."
+    # Stop and remove existing Portainer containers and volumes, if any, with Docker Compose
+    echo "Stopping and removing existing Portainer containers and volumes with Docker Compose..."
     docker-compose -f docker-compose-portainer.yml down
 
-    # Volume für portainer anlegen
+    # Wait and check if Portainer is completely stopped
+    while docker ps -a | grep -q 'portainer'; do
+        echo "Waiting for Portainer to fully stop..."
+        sleep 2
+    done
+    echo "Portainer has been fully stopped."
+
+    # Create volume for portainer
     docker volume create $PORTAINER_VOLUME
 
-    # Abfrage, ob ein Backup wiederhergestellt werden soll
-    read -p "Möchten Sie das Portainer aus einem Backup wiederherstellen? [yes/no, default: yes]: " RESTORE_ANSWER
+    # Query whether to restore from a backup
+    read -p "Do you want to restore Portainer from a backup? [yes/no, default: no]: " RESTORE_ANSWER
     RESTORE_ANSWER=${RESTORE_ANSWER:-yes}
 
     if [[ "$RESTORE_ANSWER" =~ ^[Yy]es$ ]]; then
-        # Backup-Datei herunterladen und extrahieren
-        echo "Lade Portainer-Backup herunter und extrahiere es..."
-        read -p "Geben Sie den Namen der Backup-Datei für Portainer ein: " BACKUP_FILENAME
+        # Download and extract the backup file
+        echo "Downloading and extracting Portainer backup..."
+        read -p "Enter the name of the backup file for Portainer: " BACKUP_FILENAME
         restore $BACKUP_FILENAME "backup/portainer" "${WEBDAV_BASE_PATH}/portainer" $PORTAINER_VOLUME
     fi
 }
 
-restore_minecraft_data() {
-    TARGET_VOLUME=$1
-
-    # Abfrage, ob ein Backup wiederhergestellt werden soll
-    read -p "Möchten Sie Minecraft Daten für \"${TARGET_VOLUME}\" aus einem Backup wiederherstellen? [yes/no, default: yes]: " RESTORE_ANSWER
-    RESTORE_ANSWER=${RESTORE_ANSWER:-yes}
-
-    if [[ "$RESTORE_ANSWER" =~ ^[Yy]es$ ]]; then
-        # Backup-Datei herunterladen und extrahieren
-        echo "Lade Minecraft-Backup herunter und extrahiere es..."
-        read -p "Geben Sie den Namen der Backup-Datei für Minecraft ein: " BACKUP_FILENAME
-        restore $BACKUP_FILENAME "backup/${TARGET_VOLUME}" "${WEBDAV_BASE_PATH}/${TARGET_VOLUME}" $TARGET_VOLUME
-    fi
-}
-
 configure_ufw() {
-    echo "Konfiguriere UFW"
-    # Stellen Sie sicher, dass SSH-Zugriff erlaubt ist, um nicht ausgesperrt zu werden
+    echo "Configuring UFW"
+    # Ensure SSH access is allowed to not get locked out
     sudo ufw allow ssh
     
     sudo ufw allow 9000/tcp # Portainer
@@ -224,13 +216,13 @@ configure_ufw() {
 }
 
 start_portainer() {
-    # Prüfe, ob ein Portainer-Container bereits läuft
+    # Check if a Portainer container is already running
     if docker ps --format '{{.Names}}' | grep -q 'portainer'; then
-        echo "Portainer läuft bereits."
+        echo "Portainer is already running."
     else
-        echo "Starte Portainer mit Docker Compose..."
+        echo "Starting Portainer with Docker Compose..."
         docker-compose -f docker-compose-portainer.yml up -d
-        echo "Portainer wurde mit Docker Compose gestartet."
+        echo "Portainer has been started with Docker Compose."
     fi
 }
 
@@ -254,7 +246,7 @@ main() {
 
     start_portainer
 
-    echo "Installation abgeschlossen. Bitte starten Sie Ihre Shell neu oder führen Sie 'source ~/.bash_aliases' aus, um die Änderungen zu übernehmen."
+    echo "Installation completed. Please restart your shell or run 'source ~/.bash_aliases' to apply changes."
 }
 
 main "$@"
